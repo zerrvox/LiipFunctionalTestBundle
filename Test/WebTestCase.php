@@ -38,6 +38,8 @@ use Symfony\Bridge\Doctrine\DataFixtures\ContainerAwareLoader as DataFixturesLoa
 use Symfony\Bundle\DoctrineFixturesBundle\Common\DataFixtures\Loader as SymfonyFixturesLoader;
 use Doctrine\Bundle\FixturesBundle\Common\DataFixtures\Loader as DoctrineFixturesLoader;
 
+use Jackalope\Transport\DoctrineDBAL\RepositorySchema;
+
 /**
  * @author Lea Haensenberger
  * @author Lukas Kahwe Smith <smith@pooteeweet.org>
@@ -46,7 +48,7 @@ use Doctrine\Bundle\FixturesBundle\Common\DataFixtures\Loader as DoctrineFixture
 abstract class WebTestCase extends BaseWebTestCase
 {
     protected $environment = 'test';
-    protected $containers;
+    protected $containers = array();
     protected $kernelDir;
     // 5 * 1024 * 1024 KB
     protected $maxMemory = 5242880;
@@ -246,7 +248,12 @@ abstract class WebTestCase extends BaseWebTestCase
         }
 
         if ('ORM' === $type) {
-            $connection = $om->getConnection();
+            //echo $type;
+            if ('ORM' === $type) {
+                $connection = $om->getConnection();
+            } else if ($type = 'PHPCR') {
+                $connection = $om->getPhpcrSession()->getTransport()->getConnection();
+            }
             if ($connection->getDriver() instanceOf SqliteDriver) {
                 $params = $connection->getParams();
                 $name = isset($params['path']) ? $params['path'] : $params['dbname'];
@@ -274,17 +281,28 @@ abstract class WebTestCase extends BaseWebTestCase
                     }
                 }
 
-                // TODO: handle case when using persistent connections. Fail loudly?
-                $schemaTool = new SchemaTool($om);
-                $schemaTool->dropDatabase($name);
-                if (!empty($metadatas)) {
-                    $schemaTool->createSchema($metadatas);
+                if ($type == "ORM") {
+                    // TODO: handle case when using persistent connections. Fail loudly?
+                    $schemaTool = new SchemaTool($om);
+                    $schemaTool->dropDatabase($name);
+                    if (!empty($metadatas)) {
+                        $schemaTool->createSchema($metadatas);
+                    }
+                } else if($type == "PHPCR") {
+                    $schema = RepositorySchema::create();
+                    foreach ($schema->toDropSql($connection->getDatabasePlatform()) as $sql) {
+                        $connection->exec($sql);
+                    }
+                    foreach ($schema->toSql($connection->getDatabasePlatform()) as $sql) {
+                        $connection->exec($sql);
+                    }
                 }
                 $this->postFixtureSetup();
 
                 $executor = new $executorClass($om);
                 $executor->setReferenceRepository($referenceRepository);
             }
+            $connection->close();
         }
 
         if (empty($executor)) {
